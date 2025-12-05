@@ -1,6 +1,5 @@
 """
 更新数据库，添加分级标记和新数据
-1234444
 """
 from database import SessionLocal, init_db
 from models import Sentence
