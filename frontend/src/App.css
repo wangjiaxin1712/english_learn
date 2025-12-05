@@ -7,10 +7,16 @@
   position: relative;
 }
 
-.back-to-settings-btn {
+.top-left-buttons {
   position: fixed;
   top: 20px;
   left: 20px;
+  display: flex;
+  gap: 10px;
+  z-index: 100;
+}
+
+.back-to-settings-btn {
   background: rgba(255, 255, 255, 0.2);
   border: 1px solid rgba(255, 255, 255, 0.3);
   color: rgba(255, 255, 255, 0.8);
@@ -19,11 +25,28 @@
   cursor: pointer;
   font-size: 18px;
   transition: all 0.3s;
-  z-index: 100;
   backdrop-filter: blur(4px);
 }
 
 .back-to-settings-btn:hover {
+  background: rgba(255, 255, 255, 0.3);
+  color: rgba(255, 255, 255, 1);
+  border-color: rgba(255, 255, 255, 0.5);
+}
+
+.temp-practice-btn {
+  background: rgba(255, 255, 255, 0.2);
+  border: 1px solid rgba(255, 255, 255, 0.3);
+  color: rgba(255, 255, 255, 0.8);
+  padding: 8px 12px;
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 14px;
+  transition: all 0.3s;
+  backdrop-filter: blur(4px);
+}
+
+.temp-practice-btn:hover {
   background: rgba(255, 255, 255, 0.3);
   color: rgba(255, 255, 255, 1);
   border-color: rgba(255, 255, 255, 0.5);
