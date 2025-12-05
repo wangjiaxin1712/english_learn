@@ -82,6 +82,21 @@
   background-color: #f0f4ff;
 }
 
+.char-cell.focused {
+  border-bottom: 3px solid #667eea;
+  background-color: #e3f2fd;
+  animation: blink 1s infinite;
+}
+
+@keyframes blink {
+  0%, 50% {
+    opacity: 1;
+  }
+  51%, 100% {
+    opacity: 0.7;
+  }
+}
+
 .char-cell.correct {
   color: #2e7d32;
   background-color: #c8e6c9;

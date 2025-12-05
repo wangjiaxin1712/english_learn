@@ -14,6 +14,7 @@ const LearningCard = ({ settings, onBackToSettings, onProgressChange }) => {
   const [historyIndex, setHistoryIndex] = useState(-1); // 当前在历史记录中的位置
   const [sentenceList, setSentenceList] = useState([]); // 顺序播放时的句子列表
   const [currentIndex, setCurrentIndex] = useState(0); // 顺序播放时的当前索引
+  const [currentFocusIndex, setCurrentFocusIndex] = useState(0); // 当前聚焦的输入位置
   const inputRef = useRef(null);
   const synthRef = useRef(null);
   const utteranceRef = useRef(null);
@@ -294,9 +295,10 @@ const LearningCard = ({ settings, onBackToSettings, onProgressChange }) => {
       if (sentenceData.english) {
         const positions = parseAnswerStructure(sentenceData.english);
         setCharPositions(positions);
-        // 初始化答案字符数组（只包括字母，不包括标点符号）
+        // 初始化答案字符数组（包括字母和数字，不包括标点符号）
         const letterCount = positions.filter(p => p.type === 'letter').length;
         setAnswerChars(new Array(letterCount).fill(''));
+        setCurrentFocusIndex(0); // 重置聚焦位置
       }
       
       // 加载完成后自动聚焦输入框
@@ -498,24 +500,86 @@ const LearningCard = ({ settings, onBackToSettings, onProgressChange }) => {
   // 处理用户输入
   const handleInputChange = (e) => {
     const value = e.target.value;
-    // 只保留字母（不包括标点符号），转换为小写
-    const filtered = value.replace(/[^a-zA-Z]/g, '').toLowerCase();
+    // 只保留字母和数字（不包括标点符号），转换为小写
+    const filtered = value.replace(/[^a-zA-Z0-9]/g, '').toLowerCase();
     
-    // 更新字符数组（只处理字母，不包括标点符号）
+    if (filtered.length === 0) {
+      // 如果输入为空，清空当前聚焦位置
+      const newChars = [...answerChars];
+      newChars[currentFocusIndex] = '';
+      setAnswerChars(newChars);
+      setUserAnswer(newChars.join(''));
+      return;
+    }
+    
+    // 获取最后一个输入的字符
+    const lastChar = filtered[filtered.length - 1];
     const newChars = [...answerChars];
-    const letterPositions = charPositions.filter(p => p.type === 'letter');
     
-    // 按顺序填充字符（只填充字母）
-    for (let i = 0; i < letterPositions.length; i++) {
-      if (i < filtered.length) {
-        newChars[i] = filtered[i];
+    // 在当前聚焦位置填入字符
+    if (currentFocusIndex < newChars.length) {
+      newChars[currentFocusIndex] = lastChar;
+      
+      // 自动移动到下一个空位置
+      let nextIndex = currentFocusIndex + 1;
+      while (nextIndex < newChars.length && newChars[nextIndex] !== '') {
+        nextIndex++;
+      }
+      if (nextIndex < newChars.length) {
+        setCurrentFocusIndex(nextIndex);
       } else {
-        newChars[i] = '';
+        // 如果后面都填满了，移动到最后一个位置
+        setCurrentFocusIndex(newChars.length - 1);
       }
     }
     
     setAnswerChars(newChars);
-    setUserAnswer(filtered);
+    setUserAnswer(newChars.join(''));
+  };
+  
+  // 处理字符单元格点击
+  const handleCharCellClick = (inputIndex) => {
+    if (result || loading) return;
+    setCurrentFocusIndex(inputIndex);
+    if (inputRef.current) {
+      inputRef.current.focus();
+    }
+  };
+  
+  // 处理键盘方向键
+  const handleKeyDown = (e) => {
+    if (result || loading) return;
+    
+    const letterPositions = charPositions.filter(p => p.type === 'letter');
+    
+    if (e.key === 'ArrowLeft') {
+      e.preventDefault();
+      const newIndex = Math.max(0, currentFocusIndex - 1);
+      setCurrentFocusIndex(newIndex);
+    } else if (e.key === 'ArrowRight') {
+      e.preventDefault();
+      const newIndex = Math.min(letterPositions.length - 1, currentFocusIndex + 1);
+      setCurrentFocusIndex(newIndex);
+    } else if (e.key === 'Backspace') {
+      e.preventDefault();
+      const newChars = [...answerChars];
+      if (newChars[currentFocusIndex]) {
+        // 如果当前位置有字符，删除它
+        newChars[currentFocusIndex] = '';
+      } else if (currentFocusIndex > 0) {
+        // 如果当前位置为空，删除前一个位置的字符并移动光标
+        newChars[currentFocusIndex - 1] = '';
+        setCurrentFocusIndex(currentFocusIndex - 1);
+      }
+      setAnswerChars(newChars);
+      setUserAnswer(newChars.join(''));
+    } else if (e.key === 'Delete') {
+      e.preventDefault();
+      const newChars = [...answerChars];
+      newChars[currentFocusIndex] = '';
+      setAnswerChars(newChars);
+      setUserAnswer(newChars.join(''));
+    }
   };
 
   const handleKeyPress = (e) => {
@@ -532,7 +596,7 @@ const LearningCard = ({ settings, onBackToSettings, onProgressChange }) => {
 
   // 全局键盘事件监听
   useEffect(() => {
-    const handleKeyDown = (e) => {
+    const handleGlobalKeyDown = (e) => {
       // Ctrl+' 播放声音
       if ((e.ctrlKey || e.metaKey) && e.key === "'") {
         e.preventDefault();
@@ -551,9 +615,9 @@ const LearningCard = ({ settings, onBackToSettings, onProgressChange }) => {
       }
     };
 
-    window.addEventListener('keydown', handleKeyDown);
+    window.addEventListener('keydown', handleGlobalKeyDown);
     return () => {
-      window.removeEventListener('keydown', handleKeyDown);
+      window.removeEventListener('keydown', handleGlobalKeyDown);
     };
   }, [result, sentence, loading, loadNewSentence]);
 
@@ -595,6 +659,7 @@ const LearningCard = ({ settings, onBackToSettings, onProgressChange }) => {
           value={userAnswer}
           onChange={handleInputChange}
           onKeyPress={handleKeyPress}
+          onKeyDown={handleKeyDown}
           disabled={loading || result}
           autoFocus
         />
@@ -619,8 +684,8 @@ const LearningCard = ({ settings, onBackToSettings, onProgressChange }) => {
               );
             }
             
-            // 字母需要填写
-            // 找到这个字符在可输入字符数组中的索引（只包括字母）
+            // 字母和数字需要填写
+            // 找到这个字符在可输入字符数组中的索引（包括字母和数字）
             const letterPositions = charPositions.filter(p => p.type === 'letter');
             const inputIndex = letterPositions.findIndex(p => p === pos);
             
@@ -628,6 +693,7 @@ const LearningCard = ({ settings, onBackToSettings, onProgressChange }) => {
             const correctChar = pos.char.toLowerCase();
             const isCorrect = result ? (userChar === correctChar) : null;
             const showChar = userChar || (result ? correctChar : '');
+            const isFocused = !result && inputIndex === currentFocusIndex;
             
             return (
               <span
@@ -636,7 +702,9 @@ const LearningCard = ({ settings, onBackToSettings, onProgressChange }) => {
                   result 
                     ? (isCorrect ? 'correct' : 'incorrect')
                     : userChar ? 'filled' : 'empty'
-                }`}
+                } ${isFocused ? 'focused' : ''}`}
+                onClick={() => handleCharCellClick(inputIndex)}
+                style={{ cursor: result ? 'default' : 'pointer' }}
               >
                 {showChar || '_'}
               </span>
@@ -713,4 +781,5 @@ const LearningCard = ({ settings, onBackToSettings, onProgressChange }) => {
 };
 
 export default LearningCard;
+
 
