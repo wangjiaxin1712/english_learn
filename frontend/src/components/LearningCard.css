@@ -49,6 +49,18 @@
   user-select: none;
 }
 
+.word-group {
+  display: inline-flex;
+  white-space: nowrap;
+  vertical-align: bottom;
+}
+
+.char-cell-wrapper {
+  display: inline-block;
+  position: relative;
+  vertical-align: bottom;
+}
+
 .char-cell {
   display: inline-block;
   min-width: 18px;
@@ -104,11 +116,36 @@
   font-weight: bold;
 }
 
+.char-cell.locked {
+  color: #2e7d32;
+  background-color: #c8e6c9;
+  border-bottom-color: #4caf50;
+  font-weight: bold;
+  cursor: default;
+  opacity: 0.9;
+}
+
 .char-cell.incorrect {
   color: #c62828;
   background-color: #ffcdd2;
   border-bottom-color: #f44336;
   font-weight: bold;
+}
+
+.char-cell.has-strikethrough {
+  position: relative;
+}
+
+.char-cell.has-strikethrough::after {
+  content: '';
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 50%;
+  height: 2px;
+  background-color: #c62828;
+  transform: translateY(-50%);
+  z-index: 5;
 }
 
 .spacing {
@@ -140,7 +177,8 @@
 .submit-btn,
 .next-btn,
 .play-text-btn,
-.prev-btn {
+.prev-btn,
+.continue-btn {
   padding: 15px 40px;
   font-size: 18px;
   background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
@@ -155,9 +193,38 @@
 .submit-btn:hover:not(:disabled),
 .next-btn:hover:not(:disabled),
 .play-text-btn:hover:not(:disabled),
-.prev-btn:hover:not(:disabled) {
+.prev-btn:hover:not(:disabled),
+.continue-btn:hover:not(:disabled) {
   transform: translateY(-2px);
   box-shadow: 0 5px 15px rgba(102, 126, 234, 0.4);
+}
+
+.retry-btn {
+  width: 50px;
+  height: 50px;
+  border-radius: 50%;
+  background: rgba(102, 126, 234, 0.1);
+  border: 2px solid rgba(102, 126, 234, 0.3);
+  color: #667eea;
+  font-size: 24px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.2s;
+  font-weight: normal;
+  padding: 0;
+  margin-left: 10px;
+}
+
+.retry-btn:hover {
+  background: rgba(102, 126, 234, 0.2);
+  border-color: rgba(102, 126, 234, 0.5);
+  transform: rotate(180deg) scale(1.1);
+}
+
+.retry-btn:active {
+  transform: rotate(180deg) scale(0.95);
 }
 
 .submit-btn:disabled,
