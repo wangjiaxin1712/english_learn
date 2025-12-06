@@ -15,6 +15,7 @@ const LearningCard = ({ settings, onBackToSettings, onProgressChange }) => {
   const [sentenceList, setSentenceList] = useState([]); // 顺序播放时的句子列表
   const [currentIndex, setCurrentIndex] = useState(0); // 顺序播放时的当前索引
   const [currentFocusIndex, setCurrentFocusIndex] = useState(0); // 当前聚焦的输入位置
+  const [lockedChars, setLockedChars] = useState([]); // 已锁定的正确字符位置（布尔数组）
   const inputRef = useRef(null);
   const synthRef = useRef(null);
   const utteranceRef = useRef(null);
@@ -298,6 +299,7 @@ const LearningCard = ({ settings, onBackToSettings, onProgressChange }) => {
         // 初始化答案字符数组（包括字母和数字，不包括标点符号）
         const letterCount = positions.filter(p => p.type === 'letter').length;
         setAnswerChars(new Array(letterCount).fill(''));
+        setLockedChars(new Array(letterCount).fill(false)); // 初始化锁定状态
         setCurrentFocusIndex(0); // 重置聚焦位置
       }
       
@@ -454,40 +456,94 @@ const LearningCard = ({ settings, onBackToSettings, onProgressChange }) => {
     try {
       setLoading(true);
       
-      // 如果是自定义数据，直接在前端检查答案
+      // 获取正确答案
+      let correctAnswer = '';
       if (settings && settings.customSentences) {
-        const correctAnswer = sentence.english.trim();
-        // 答案检查：忽略大小写，规范化空格
-        const normalizedUser = submittedAnswer.toLowerCase().trim().replace(/\s+/g, ' ');
-        const normalizedCorrect = correctAnswer.toLowerCase().trim().replace(/\s+/g, ' ');
-        const isCorrect = normalizedUser === normalizedCorrect;
-        
-        const checkResult = {
-          is_correct: isCorrect,
-          correct_answer: correctAnswer,
-          user_answer: submittedAnswer
-        };
-        
-        setResult(checkResult);
-        
-        // 显示结果后重新朗读正确答案
-        if (correctAnswer) {
-          setTimeout(() => {
-            speakText(correctAnswer);
-          }, 800);
-        }
+        correctAnswer = sentence.english.trim();
       } else {
         // 使用API检查答案
         const checkResult = await checkAnswer(sentence.id, submittedAnswer);
-        setResult(checkResult);
-        
-        // 显示结果后重新朗读正确答案（延迟确保结果已显示）
-        if (checkResult.correct_answer) {
-          setTimeout(() => {
-            speakText(checkResult.correct_answer);
-            // 播放完成后，输入框已经禁用，不需要聚焦
-          }, 800);
+        correctAnswer = checkResult.correct_answer || sentence.english.trim();
+      }
+      
+      // 检查答案是否正确（先不锁定，只显示结果）
+      // 按单词比较，检查是否全部正确
+      const letterPositions = charPositions.filter(p => p.type === 'letter');
+      
+      // 将字符位置按单词分组
+      const words = [];
+      let currentWord = [];
+      
+      for (let i = 0; i < charPositions.length; i++) {
+        const pos = charPositions[i];
+        if (pos.type === 'letter') {
+          const charIdx = letterPositions.findIndex(p => p === pos);
+          currentWord.push({
+            posIndex: i,
+            charIndex: charIdx,
+            correctChar: pos.char
+          });
+        } else if (pos.type === 'spacing' || pos.type === 'space' || pos.type === 'punctuation') {
+          // 遇到分隔符，结束当前单词
+          if (currentWord.length > 0) {
+            words.push([...currentWord]);
+            currentWord = [];
+          }
         }
+      }
+      // 添加最后一个单词
+      if (currentWord.length > 0) {
+        words.push(currentWord);
+      }
+      
+      // 检查是否所有单词都正确
+      let allCorrect = true;
+      for (const word of words) {
+        // 检查这个单词是否已经全部锁定
+        const isWordLocked = word.every(w => lockedChars[w.charIndex]);
+        if (isWordLocked) {
+          continue; // 已锁定的单词跳过
+        }
+        
+        // 构建用户输入的单词和正确答案的单词
+        let userWord = '';
+        let correctWord = '';
+        let allFilled = true;
+        
+        for (const w of word) {
+          const userChar = answerChars[w.charIndex] || '';
+          if (!userChar) {
+            allFilled = false;
+            allCorrect = false;
+            break;
+          }
+          userWord += userChar.toLowerCase();
+          correctWord += w.correctChar.toLowerCase();
+        }
+        
+        // 如果单词填写完整，检查是否正确
+        if (allFilled && userWord !== correctWord) {
+          allCorrect = false;
+        }
+      }
+      
+      // 检查是否所有位置都已锁定（全部正确）
+      const allLocked = lockedChars.every(locked => locked);
+      const finalCorrect = allLocked || allCorrect;
+      
+      // 设置结果（只显示，不锁定）
+      const checkResult = {
+        is_correct: finalCorrect,
+        correct_answer: correctAnswer,
+        user_answer: submittedAnswer
+      };
+      setResult(checkResult);
+      
+      // 显示结果后重新朗读正确答案
+      if (correctAnswer) {
+        setTimeout(() => {
+          speakText(correctAnswer);
+        }, 800);
       }
     } catch (error) {
       console.error('检查答案失败:', error);
@@ -504,11 +560,13 @@ const LearningCard = ({ settings, onBackToSettings, onProgressChange }) => {
     const filtered = value.replace(/[^a-zA-Z0-9]/g, '').toLowerCase();
     
     if (filtered.length === 0) {
-      // 如果输入为空，清空当前聚焦位置
-      const newChars = [...answerChars];
-      newChars[currentFocusIndex] = '';
-      setAnswerChars(newChars);
-      setUserAnswer(newChars.join(''));
+      // 如果输入为空，清空当前聚焦位置（但不能清空已锁定的）
+      if (!lockedChars[currentFocusIndex]) {
+        const newChars = [...answerChars];
+        newChars[currentFocusIndex] = '';
+        setAnswerChars(newChars);
+        setUserAnswer(newChars.join(''));
+      }
       return;
     }
     
@@ -516,20 +574,29 @@ const LearningCard = ({ settings, onBackToSettings, onProgressChange }) => {
     const lastChar = filtered[filtered.length - 1];
     const newChars = [...answerChars];
     
-    // 在当前聚焦位置填入字符
-    if (currentFocusIndex < newChars.length) {
+    // 在当前聚焦位置填入字符（但不能修改已锁定的位置）
+    if (currentFocusIndex < newChars.length && !lockedChars[currentFocusIndex]) {
       newChars[currentFocusIndex] = lastChar;
       
-      // 自动移动到下一个空位置
+      // 自动移动到下一个未锁定且为空的位置
       let nextIndex = currentFocusIndex + 1;
-      while (nextIndex < newChars.length && newChars[nextIndex] !== '') {
+      while (nextIndex < newChars.length && (lockedChars[nextIndex] || newChars[nextIndex] !== '')) {
         nextIndex++;
       }
       if (nextIndex < newChars.length) {
         setCurrentFocusIndex(nextIndex);
       } else {
-        // 如果后面都填满了，移动到最后一个位置
-        setCurrentFocusIndex(newChars.length - 1);
+        // 如果后面都填满了，找到第一个未锁定且为空的位置
+        const firstEmptyIndex = newChars.findIndex((char, index) => !lockedChars[index] && !char);
+        if (firstEmptyIndex >= 0) {
+          setCurrentFocusIndex(firstEmptyIndex);
+        } else {
+          // 如果所有位置都填满了，移动到最后一个未锁定的位置
+          const lastUnlockedIndex = [...lockedChars].reverse().findIndex(locked => !locked);
+          if (lastUnlockedIndex >= 0) {
+            setCurrentFocusIndex(newChars.length - 1 - lastUnlockedIndex);
+          }
+        }
       }
     }
     
@@ -539,7 +606,9 @@ const LearningCard = ({ settings, onBackToSettings, onProgressChange }) => {
   
   // 处理字符单元格点击
   const handleCharCellClick = (inputIndex) => {
-    if (result || loading) return;
+    if (loading) return;
+    // 不能点击已锁定的位置
+    if (lockedChars[inputIndex]) return;
     setCurrentFocusIndex(inputIndex);
     if (inputRef.current) {
       inputRef.current.focus();
@@ -548,33 +617,57 @@ const LearningCard = ({ settings, onBackToSettings, onProgressChange }) => {
   
   // 处理键盘方向键
   const handleKeyDown = (e) => {
-    if (result || loading) return;
+    if (loading) return;
     
     const letterPositions = charPositions.filter(p => p.type === 'letter');
     
     if (e.key === 'ArrowLeft') {
       e.preventDefault();
-      const newIndex = Math.max(0, currentFocusIndex - 1);
-      setCurrentFocusIndex(newIndex);
+      // 向左移动，跳过已锁定的位置
+      let newIndex = currentFocusIndex - 1;
+      while (newIndex >= 0 && lockedChars[newIndex]) {
+        newIndex--;
+      }
+      if (newIndex >= 0) {
+        setCurrentFocusIndex(newIndex);
+      }
     } else if (e.key === 'ArrowRight') {
       e.preventDefault();
-      const newIndex = Math.min(letterPositions.length - 1, currentFocusIndex + 1);
-      setCurrentFocusIndex(newIndex);
+      // 向右移动，跳过已锁定的位置
+      let newIndex = currentFocusIndex + 1;
+      while (newIndex < letterPositions.length && lockedChars[newIndex]) {
+        newIndex++;
+      }
+      if (newIndex < letterPositions.length) {
+        setCurrentFocusIndex(newIndex);
+      }
     } else if (e.key === 'Backspace') {
       e.preventDefault();
+      // 不能删除已锁定的字符
+      if (lockedChars[currentFocusIndex]) return;
+      
       const newChars = [...answerChars];
       if (newChars[currentFocusIndex]) {
         // 如果当前位置有字符，删除它
         newChars[currentFocusIndex] = '';
       } else if (currentFocusIndex > 0) {
-        // 如果当前位置为空，删除前一个位置的字符并移动光标
-        newChars[currentFocusIndex - 1] = '';
-        setCurrentFocusIndex(currentFocusIndex - 1);
+        // 如果当前位置为空，删除前一个位置的字符并移动光标（但不能删除已锁定的）
+        let prevIndex = currentFocusIndex - 1;
+        while (prevIndex >= 0 && lockedChars[prevIndex]) {
+          prevIndex--;
+        }
+        if (prevIndex >= 0) {
+          newChars[prevIndex] = '';
+          setCurrentFocusIndex(prevIndex);
+        }
       }
       setAnswerChars(newChars);
       setUserAnswer(newChars.join(''));
     } else if (e.key === 'Delete') {
       e.preventDefault();
+      // 不能删除已锁定的字符
+      if (lockedChars[currentFocusIndex]) return;
+      
       const newChars = [...answerChars];
       newChars[currentFocusIndex] = '';
       setAnswerChars(newChars);
@@ -585,14 +678,123 @@ const LearningCard = ({ settings, onBackToSettings, onProgressChange }) => {
   const handleKeyPress = (e) => {
     if (e.key === 'Enter' && !loading) {
       if (result) {
-        // 如果有结果显示，按Enter键进入下一题
-        handleNext();
+        // 如果有结果显示
+        if (result.is_correct) {
+          // 全部正确，进入下一题
+          handleNext();
+        } else {
+          // 还有错误，触发继续
+          handleContinue();
+        }
       } else {
         // 否则提交答案
         handleSubmit();
       }
     }
   };
+
+  // 继续填写（清空错误提示，锁定正确单词，清空错误单词）
+  const handleContinue = useCallback(() => {
+    // 按单词比较，锁定正确的单词，清空错误的单词
+    const newLockedChars = [...lockedChars];
+    const newAnswerChars = [...answerChars];
+    
+    // 将字符位置按单词分组
+    const letterPositions = charPositions.filter(p => p.type === 'letter');
+    const words = [];
+    let currentWord = [];
+    
+    for (let i = 0; i < charPositions.length; i++) {
+      const pos = charPositions[i];
+      if (pos.type === 'letter') {
+        const charIdx = letterPositions.findIndex(p => p === pos);
+        currentWord.push({
+          posIndex: i,
+          charIndex: charIdx,
+          correctChar: pos.char
+        });
+      } else if (pos.type === 'spacing' || pos.type === 'space' || pos.type === 'punctuation') {
+        // 遇到分隔符，结束当前单词
+        if (currentWord.length > 0) {
+          words.push([...currentWord]);
+          currentWord = [];
+        }
+      }
+    }
+    // 添加最后一个单词
+    if (currentWord.length > 0) {
+      words.push(currentWord);
+    }
+    
+    // 逐个单词比较
+    for (const word of words) {
+      // 检查这个单词是否已经全部锁定
+      const isWordLocked = word.every(w => lockedChars[w.charIndex]);
+      if (isWordLocked) {
+        continue; // 已锁定的单词跳过
+      }
+      
+      // 构建用户输入的单词和正确答案的单词
+      let userWord = '';
+      let correctWord = '';
+      let allFilled = true;
+      
+      for (const w of word) {
+        const userChar = answerChars[w.charIndex] || '';
+        if (!userChar) {
+          allFilled = false;
+        }
+        userWord += userChar.toLowerCase();
+        correctWord += w.correctChar.toLowerCase();
+      }
+      
+      // 检查单词是否有任何输入
+      const hasAnyInput = word.some(w => answerChars[w.charIndex]);
+      
+      if (hasAnyInput) {
+        // 如果用户填写了完整的单词，进行比较
+        if (allFilled && userWord === correctWord) {
+          // 整个单词正确，锁定该单词的所有字符
+          for (const w of word) {
+            newLockedChars[w.charIndex] = true;
+            // 确保使用正确的字符（保持大小写）
+            newAnswerChars[w.charIndex] = w.correctChar;
+          }
+        } else {
+          // 整个单词错误或未填完整，清空该单词的所有字符
+          for (const w of word) {
+            newAnswerChars[w.charIndex] = '';
+          }
+        }
+      }
+      // 如果单词没有任何输入，不做任何处理，保持为空
+    }
+    
+    setLockedChars(newLockedChars);
+    setAnswerChars(newAnswerChars);
+    
+    // 清空result状态
+    setResult(null);
+    
+    // 找到第一个未锁定且为空的位置并聚焦
+    const firstEmptyIndex = newAnswerChars.findIndex((char, index) => !newLockedChars[index] && !char);
+    if (firstEmptyIndex >= 0) {
+      setCurrentFocusIndex(firstEmptyIndex);
+    } else {
+      // 如果所有位置都有字符或已锁定，找到第一个未锁定的位置
+      const firstUnlockedIndex = newLockedChars.findIndex(locked => !locked);
+      if (firstUnlockedIndex >= 0) {
+        setCurrentFocusIndex(firstUnlockedIndex);
+      }
+    }
+    
+    // 聚焦输入框
+    setTimeout(() => {
+      if (inputRef.current) {
+        inputRef.current.focus();
+      }
+    }, 100);
+  }, [answerChars, lockedChars, charPositions]);
 
   // 全局键盘事件监听
   useEffect(() => {
@@ -608,10 +810,16 @@ const LearningCard = ({ settings, onBackToSettings, onProgressChange }) => {
         return;
       }
       
-      // Enter键：如果有结果显示，进入下一题；否则由input的onKeyPress处理
+      // Enter键：如果有结果显示，根据是否正确决定进入下一题或继续；否则由input的onKeyPress处理
       if (e.key === 'Enter' && !loading && result) {
         e.preventDefault();
-        loadNewSentence();
+        if (result.is_correct) {
+          // 全部正确，进入下一题
+          loadNewSentence();
+        } else {
+          // 还有错误，触发继续
+          handleContinue();
+        }
       }
     };
 
@@ -619,10 +827,34 @@ const LearningCard = ({ settings, onBackToSettings, onProgressChange }) => {
     return () => {
       window.removeEventListener('keydown', handleGlobalKeyDown);
     };
-  }, [result, sentence, loading, loadNewSentence]);
+  }, [result, sentence, loading, loadNewSentence, handleContinue]);
 
   const handleNext = () => {
     loadNewSentence();
+  };
+
+  // 重做当前题目
+  const handleRetry = () => {
+    // 清空用户输入和锁定状态
+    setAnswerChars(new Array(answerChars.length).fill(''));
+    setLockedChars(new Array(answerChars.length).fill(false));
+    setUserAnswer('');
+    setResult(null);
+    setCurrentFocusIndex(0);
+    
+    // 重新播放语音
+    if (sentence && sentence.english) {
+      setTimeout(() => {
+        speakText(sentence.english);
+      }, 100);
+    }
+    
+    // 聚焦输入框
+    setTimeout(() => {
+      if (inputRef.current) {
+        inputRef.current.focus();
+      }
+    }, 200);
   };
 
   // 获取正确答案的字符数组（按顺序，只包括字母）
@@ -660,56 +892,105 @@ const LearningCard = ({ settings, onBackToSettings, onProgressChange }) => {
           onChange={handleInputChange}
           onKeyPress={handleKeyPress}
           onKeyDown={handleKeyDown}
-          disabled={loading || result}
+          disabled={loading}
           autoFocus
         />
         
         {/* 显示下划线和用户输入 */}
         <div className="answer-display" onClick={() => {
-          if (!result && inputRef.current) {
+          if (inputRef.current) {
             inputRef.current.focus();
           }
         }}>
-          {charPositions.map((pos, idx) => {
-            if (pos.type === 'spacing' || pos.type === 'space') {
-              return <span key={idx} className="spacing">{pos.char}</span>;
+          {(() => {
+            // 将字符位置按单词分组
+            const letterPositions = charPositions.filter(p => p.type === 'letter');
+            const groups = [];
+            let currentGroup = [];
+            
+            for (let i = 0; i < charPositions.length; i++) {
+              const pos = charPositions[i];
+              
+              if (pos.type === 'letter') {
+                currentGroup.push({ type: 'letter', pos, index: i });
+              } else if (pos.type === 'spacing' || pos.type === 'space') {
+                if (currentGroup.length > 0) {
+                  groups.push({ type: 'word', items: [...currentGroup] });
+                  currentGroup = [];
+                }
+                groups.push({ type: 'spacing', pos, index: i });
+              } else if (pos.type === 'punctuation') {
+                if (currentGroup.length > 0) {
+                  groups.push({ type: 'word', items: [...currentGroup] });
+                  currentGroup = [];
+                }
+                groups.push({ type: 'punctuation', pos, index: i });
+              }
+            }
+            // 添加最后一个单词
+            if (currentGroup.length > 0) {
+              groups.push({ type: 'word', items: currentGroup });
             }
             
-            // 标点符号直接显示，不需要填写
-            if (pos.type === 'punctuation') {
+            return groups.map((group, groupIdx) => {
+              if (group.type === 'spacing') {
+                return <span key={`spacing-${groupIdx}`} className="spacing">{group.pos.char}</span>;
+              }
+              
+              if (group.type === 'punctuation') {
+                return (
+                  <span key={`punctuation-${groupIdx}`} className="punctuation-char">
+                    {group.pos.char}
+                  </span>
+                );
+              }
+              
+              // 单词组
               return (
-                <span key={idx} className="punctuation-char">
-                  {pos.char}
+                <span key={`word-${groupIdx}`} className="word-group">
+                  {group.items.map((item, itemIdx) => {
+                    const pos = item.pos;
+                    const idx = item.index;
+                    const inputIndex = letterPositions.findIndex(p => p === pos);
+                    
+                    const userChar = inputIndex >= 0 ? (answerChars[inputIndex] || '') : '';
+                    const correctChar = pos.char.toLowerCase();
+                    const isLocked = inputIndex >= 0 && lockedChars[inputIndex];
+                    // 如果有结果显示，检查字符是否正确
+                    const isCorrect = result ? (userChar.toLowerCase() === correctChar) : null;
+                    // 检查是否是填了但错误的字符（需要显示删除符号）
+                    const showDeleteIcon = result && !isLocked && userChar && !isCorrect;
+                    // 已锁定的字符显示为绿色，如果有结果显示则显示正确答案，否则显示用户输入
+                    const showChar = isLocked 
+                      ? letterPositions[inputIndex].char 
+                      : (userChar || (result && !isLocked ? correctChar : ''));
+                    const isFocused = !isLocked && !result && inputIndex === currentFocusIndex;
+                    
+                    return (
+                      <span
+                        key={`char-${idx}`}
+                        className={`char-cell-wrapper`}
+                      >
+                        <span
+                          className={`char-cell ${
+                            isLocked 
+                              ? 'locked'
+                              : result 
+                                ? (isCorrect ? 'correct' : 'incorrect')
+                                : userChar ? 'filled' : 'empty'
+                          } ${showDeleteIcon ? 'has-strikethrough' : ''} ${isFocused ? 'focused' : ''}`}
+                          onClick={() => handleCharCellClick(inputIndex)}
+                          style={{ cursor: (isLocked || result) ? 'default' : 'pointer' }}
+                        >
+                          {showChar || '_'}
+                        </span>
+                      </span>
+                    );
+                  })}
                 </span>
               );
-            }
-            
-            // 字母和数字需要填写
-            // 找到这个字符在可输入字符数组中的索引（包括字母和数字）
-            const letterPositions = charPositions.filter(p => p.type === 'letter');
-            const inputIndex = letterPositions.findIndex(p => p === pos);
-            
-            const userChar = inputIndex >= 0 ? (answerChars[inputIndex] || '') : '';
-            const correctChar = pos.char.toLowerCase();
-            const isCorrect = result ? (userChar === correctChar) : null;
-            const showChar = userChar || (result ? correctChar : '');
-            const isFocused = !result && inputIndex === currentFocusIndex;
-            
-            return (
-              <span
-                key={idx}
-                className={`char-cell ${
-                  result 
-                    ? (isCorrect ? 'correct' : 'incorrect')
-                    : userChar ? 'filled' : 'empty'
-                } ${isFocused ? 'focused' : ''}`}
-                onClick={() => handleCharCellClick(inputIndex)}
-                style={{ cursor: result ? 'default' : 'pointer' }}
-              >
-                {showChar || '_'}
-              </span>
-            );
-          })}
+            });
+          })()}
         </div>
         
         {!result && (
@@ -731,7 +1012,7 @@ const LearningCard = ({ settings, onBackToSettings, onProgressChange }) => {
             <button 
               className="submit-btn" 
               onClick={handleSubmit}
-              disabled={loading || answerChars.every(c => !c)}
+              disabled={loading || answerChars.every((c, i) => !lockedChars[i] && !c)}
             >
               提交
             </button>
@@ -741,39 +1022,47 @@ const LearningCard = ({ settings, onBackToSettings, onProgressChange }) => {
 
       {result && (
         <div className="result-section">
-          <div className={`result-message ${result.is_correct ? 'correct' : 'incorrect'}`}>
-            {result.is_correct ? '✓ 正确！' : '✗ 错误'}
-          </div>
-          {!result.is_correct && (
-            <div className="correct-answer">
-              正确答案：{result.correct_answer}
-            </div>
+          {result.is_correct ? (
+            // 全部正确时显示成功消息和下一题、重做按钮
+            <>
+              <div className={`result-message correct`}>
+                ✓ 正确！
+              </div>
+              <div className="button-group">
+                <button 
+                  className="next-btn" 
+                  onClick={handleNext}
+                >
+                  下一题
+                </button>
+                <button 
+                  className="retry-btn" 
+                  onClick={handleRetry}
+                  title="重新做这道题"
+                >
+                  ↻
+                </button>
+              </div>
+            </>
+          ) : (
+            // 有错误时显示错误消息和继续按钮
+            <>
+              <div className={`result-message incorrect`}>
+                ✗ 错误
+              </div>
+              <div className="correct-answer">
+                正确答案：{result.correct_answer}
+              </div>
+              <div className="button-group">
+                <button 
+                  className="continue-btn" 
+                  onClick={handleContinue}
+                >
+                  继续
+                </button>
+              </div>
+            </>
           )}
-          <div className="button-group">
-            <button 
-              className="prev-btn" 
-              onClick={loadPreviousSentence}
-              disabled={loading || historyIndex <= 0}
-            >
-              上一题
-            </button>
-            <button 
-              className="play-text-btn" 
-              onClick={() => {
-                if (result?.correct_answer) {
-                  speakText(result.correct_answer);
-                } else if (sentence?.english) {
-                  speakText(sentence.english);
-                }
-              }}
-              disabled={isPlaying}
-            >
-              播放
-            </button>
-            <button className="next-btn" onClick={handleNext}>
-              下一题
-            </button>
-          </div>
         </div>
       )}
     </div>
